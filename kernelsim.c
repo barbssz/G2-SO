@@ -51,8 +51,6 @@ typedef struct {
     int count_rem;
     int count_list;
     int alive;
-    int count_d1;
-    int count_d2;
 } PCB;
 
 // Fila circular simples usada para Ready, bloqueados em D1 e D2.
@@ -196,8 +194,8 @@ void set_nonblock(int fd){
 // Mostra snapshot do escalonador quando usuario dá Ctrl+C.
 void print_status_table(){
     printf("\n===== STATUS (Kernel PID = %d) =====\n", getpid());
-    printf(" PID     | Name |   State   |  PC  | Blocked | Op   | R  W  A  Rm L | D1 | D2 |\n");
-    printf("-------------------------------------------------------------------------------\n");
+    printf(" PID     | Name |   State   |  PC  | Blocked | Op   | R  W  A  Rm L |\n");
+    printf("-------------------------------------------------------------------\n");
     for(int i=0;i<NUM_PROCS_APP;i++){
         PCB *p = &pcb[i];
         printf(" %-7d | %-4s | %-9s | %-4d | ", p->pid, p->name, state_str(p->state), p->pc);
@@ -205,9 +203,8 @@ void print_status_table(){
             printf("%-6s | %-4s | ", dev_str(p->blocked_dev), fsop_str((FSOperation)p->blocked_op));
         else
             printf("%-6s | %-4s | ", "-", "-");
-        printf("%-2d %-2d %-2d %-3d %-2d | %-2d | %-2d |\n",
-               p->count_read, p->count_write, p->count_add, p->count_rem, p->count_list,
-               p->count_d1, p->count_d2);
+        printf("%-2d %-2d %-2d %-3d %-2d |\n",
+               p->count_read, p->count_write, p->count_add, p->count_rem, p->count_list);
     }
     printf(" ReadyQ=%d | BlockedF=%d | BlockedD=%d\n", ready_q.size, blocked_d1_q.size, blocked_d2_q.size);
     printf("================================\n\n");
@@ -514,12 +511,10 @@ void handle_syscall_msg(int idx, AppMsg *am){
     pcb[idx].blocked_op = am->op;
     if(pending_device[idx] == DEVICE_D1){
         q_push(&blocked_d1_q, am->pid);
-        pcb[idx].count_d1++;
         if(am->op == FS_READ) pcb[idx].count_read++;
         else if(am->op == FS_WRITE) pcb[idx].count_write++;
     } else {
         q_push(&blocked_d2_q, am->pid);
-        pcb[idx].count_d2++;
         if(am->op == FS_ADD_DIR) pcb[idx].count_add++;
         else if(am->op == FS_REM_DIR) pcb[idx].count_rem++;
         else if(am->op == FS_LIST_DIR) pcb[idx].count_list++;
@@ -583,7 +578,6 @@ int main(int argc, char **argv){
         pcb[i].blocked_op = -1;
         pcb[i].count_read = pcb[i].count_write = 0;
         pcb[i].count_add = pcb[i].count_rem = pcb[i].count_list = 0;
-        pcb[i].count_d1 = pcb[i].count_d2 = 0;
         pcb[i].alive = false;
 
         pid_t p = fork();

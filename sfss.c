@@ -25,11 +25,21 @@ char root_dir[PATH_MAX];
 int path_allowed(SFPMessage *msg, char *path){
     if(msg->owner < 0 || msg->owner > NUM_PROCS_APP)
         return 0;
-    if(strncmp(path, "/A0", 3) == 0)
-        return 1;
-    char expected[5];
+    // Owner 0: apenas /A0 ou /A0/...
+    if(msg->owner == 0){
+        if(strncmp(path, "/A0", 3) != 0) return 0;
+        // precisa terminar ou ter barra na sequência
+        if(path[3] == '\0' || path[3] == '/')
+            return 1;
+        return 0;
+    }
+    // Owners 1..NUM_PROCS_APP: caminho deve começar com /A<owner> e terminar ou ter '/'
+    char expected[6];
     snprintf(expected, sizeof(expected), "/A%d", msg->owner);
-    if(strncmp(path, expected, strlen(expected)) == 0)
+    size_t plen = strlen(expected);
+    if(strncmp(path, expected, plen) != 0)
+        return 0;
+    if(path[plen] == '\0' || path[plen] == '/')
         return 1;
     return 0;
 }
@@ -103,6 +113,7 @@ int handle_write(SFPMessage *msg){
     char abs_path[PATH_MAX];
     int rv = build_path(msg->path, abs_path, sizeof(abs_path));
     if(rv < 0) return rv;
+    if(msg->owner < 1 || msg->owner > NUM_PROCS_APP) return -EACCES;
     if(!path_allowed(msg, msg->path)) return -EACCES;
     if(msg->offset % SFP_PAYLOAD_LEN != 0) return -EINVAL;
 
@@ -138,6 +149,7 @@ int handle_read(SFPMessage *msg){
     int rv = build_path(msg->path, abs_path, sizeof(abs_path));
     if(rv < 0) 
         return rv;
+    if(msg->owner < 1 || msg->owner > NUM_PROCS_APP) return -EACCES;
     if(!path_allowed(msg, msg->path)) return -EACCES;
     if(msg->offset % SFP_PAYLOAD_LEN != 0) return -EINVAL;
 
@@ -177,7 +189,7 @@ int handle_add_dir(SFPMessage *msg){
     if(build_path(msg->path, parent, sizeof(parent)) < 0)
         return -EINVAL;
     if(!path_allowed(msg, msg->path)) return -EACCES;
-    if(!path_allowed(msg, parent + strlen(root_dir))) return -EACCES;
+    if(msg->owner < 1 || msg->owner > NUM_PROCS_APP) return -EACCES;
     char target[PATH_MAX];
     if(snprintf(target, sizeof(target), "%s/%s", parent, msg->name) >= (int)sizeof(target))
         return -ENAMETOOLONG;
@@ -196,9 +208,17 @@ int handle_rem_dir(SFPMessage *msg){
     char target[PATH_MAX];
     if(snprintf(target, sizeof(target), "%s/%s", parent, msg->name) >= (int)sizeof(target))
         return -ENAMETOOLONG;
+    if(msg->owner < 1 || msg->owner > NUM_PROCS_APP) return -EACCES;
     if(!path_allowed(msg, msg->path)) return -EACCES;
-    if(!path_allowed(msg, parent + strlen(root_dir))) return -EACCES;
-    if(rmdir(target) < 0)
+    struct stat st;
+    if(stat(target, &st) < 0)
+        return -errno;
+    int rv;
+    if(S_ISDIR(st.st_mode))
+        rv = rmdir(target);
+    else
+        rv = unlink(target);
+    if(rv < 0)
         return -errno;
     return 0;
 }
@@ -208,6 +228,7 @@ int handle_list_dir(SFPMessage *msg){
     char abs_path[PATH_MAX];
     if(build_path(msg->path, abs_path, sizeof(abs_path)) < 0)
         return -EINVAL;
+    if(msg->owner < 1 || msg->owner > NUM_PROCS_APP) return -EACCES;
     if(!path_allowed(msg, msg->path)) return -EACCES;
     DIR *dir = opendir(abs_path);
     if(!dir) return -errno;
@@ -238,6 +259,8 @@ int handle_list_dir(SFPMessage *msg){
     }
     closedir(dir);
     msg->entry_count = count;
+    if(count >= SFP_MAX_ENTRIES)
+        return -EOVERFLOW;
     return 0;
 }
 
