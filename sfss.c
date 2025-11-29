@@ -21,6 +21,19 @@
 
 char root_dir[PATH_MAX];
 
+// Verifica se o owner do pedido pode acessar o prefixo do caminho (/A0 ou /A<owner>).
+int path_allowed(SFPMessage *msg, char *path){
+    if(msg->owner < 0 || msg->owner > NUM_PROCS_APP)
+        return 0;
+    if(strncmp(path, "/A0", 3) == 0)
+        return 1;
+    char expected[5];
+    snprintf(expected, sizeof(expected), "/A%d", msg->owner);
+    if(strncmp(path, expected, strlen(expected)) == 0)
+        return 1;
+    return 0;
+}
+
 // Cria diretório se não existir.
 int ensure_dir(char *path){
     struct stat st;
@@ -90,6 +103,8 @@ int handle_write(SFPMessage *msg){
     char abs_path[PATH_MAX];
     int rv = build_path(msg->path, abs_path, sizeof(abs_path));
     if(rv < 0) return rv;
+    if(!path_allowed(msg, msg->path)) return -EACCES;
+    if(msg->offset % SFP_PAYLOAD_LEN != 0) return -EINVAL;
 
     ensure_parent_dirs(abs_path);
     FILE *f = fopen(abs_path, "r+b");
@@ -123,6 +138,8 @@ int handle_read(SFPMessage *msg){
     int rv = build_path(msg->path, abs_path, sizeof(abs_path));
     if(rv < 0) 
         return rv;
+    if(!path_allowed(msg, msg->path)) return -EACCES;
+    if(msg->offset % SFP_PAYLOAD_LEN != 0) return -EINVAL;
 
 
     FILE *f = fopen(abs_path, "rb");
@@ -159,6 +176,8 @@ int handle_add_dir(SFPMessage *msg){
     char parent[PATH_MAX];
     if(build_path(msg->path, parent, sizeof(parent)) < 0)
         return -EINVAL;
+    if(!path_allowed(msg, msg->path)) return -EACCES;
+    if(!path_allowed(msg, parent + strlen(root_dir))) return -EACCES;
     char target[PATH_MAX];
     if(snprintf(target, sizeof(target), "%s/%s", parent, msg->name) >= (int)sizeof(target))
         return -ENAMETOOLONG;
@@ -177,6 +196,8 @@ int handle_rem_dir(SFPMessage *msg){
     char target[PATH_MAX];
     if(snprintf(target, sizeof(target), "%s/%s", parent, msg->name) >= (int)sizeof(target))
         return -ENAMETOOLONG;
+    if(!path_allowed(msg, msg->path)) return -EACCES;
+    if(!path_allowed(msg, parent + strlen(root_dir))) return -EACCES;
     if(rmdir(target) < 0)
         return -errno;
     return 0;
@@ -187,10 +208,13 @@ int handle_list_dir(SFPMessage *msg){
     char abs_path[PATH_MAX];
     if(build_path(msg->path, abs_path, sizeof(abs_path)) < 0)
         return -EINVAL;
+    if(!path_allowed(msg, msg->path)) return -EACCES;
     DIR *dir = opendir(abs_path);
     if(!dir) return -errno;
     struct dirent *ent;
     int count = 0;
+    memset(msg->entries, 0, sizeof(msg->entries));
+    memset(msg->entry_is_dir, 0, sizeof(msg->entry_is_dir));
     while((ent = readdir(dir)) != NULL && count < SFP_MAX_ENTRIES){
         if(strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
             continue;

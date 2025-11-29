@@ -26,7 +26,7 @@
 
 // Probabilidades usadas pelo InterController
 #define P1_PROB 10
-#define P2_PROB 5
+#define P2_PROB 2
 
 // Estruturas do kernel
 
